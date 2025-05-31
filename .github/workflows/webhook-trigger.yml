@@ -20,6 +20,16 @@ jobs:
         env:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
         run: |
+          # Debug information
+          echo "Event type: ${{ github.event_name }}"
+          echo "Actor: ${{ github.actor }}"
+          
+          # Check if WEBHOOK_URL is set
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "Error: WEBHOOK_URL is not set. Please add it in repository secrets."
+            exit 1
+          fi
+          
           EVENT_TYPE="${{ github.event_name }}"
           AUTHOR="${{ github.actor }}"
           
@@ -28,14 +38,15 @@ jobs:
             BRANCH_NAME=${GITHUB_REF#refs/heads/}
             COMMIT_HASH="${{ github.sha }}"
             
-            curl -X POST $WEBHOOK_URL \
+            echo "Sending push event webhook..."
+            curl -v -X POST $WEBHOOK_URL \
               -H "Content-Type: application/json" \
               -H "X-GitHub-Event: push" \
               -d "{
                 \"sender\": {\"login\": \"$AUTHOR\"},
                 \"ref\": \"refs/heads/$BRANCH_NAME\",
                 \"after\": \"$COMMIT_HASH\"
-              }"
+              }" || echo "Webhook request failed but continuing..."
               
           elif [[ "$EVENT_TYPE" == "pull_request" ]]; then
             # For pull request events
@@ -44,9 +55,15 @@ jobs:
             HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
             BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
             
+            echo "PR Action: $PR_ACTION"
+            echo "PR ID: $PR_ID"
+            echo "Head Branch: $HEAD_BRANCH"
+            echo "Base Branch: $BASE_BRANCH"
+            
             if [[ "$PR_ACTION" == "closed" ]] && [[ "${{ github.event.pull_request.merged }}" == "true" ]]; then
               # This is a merge event
-              curl -X POST $WEBHOOK_URL \
+              echo "Sending merge event webhook..."
+              curl -v -X POST $WEBHOOK_URL \
                 -H "Content-Type: application/json" \
                 -H "X-GitHub-Event: merge" \
                 -d "{
@@ -56,10 +73,11 @@ jobs:
                     \"head\": {\"ref\": \"$HEAD_BRANCH\"},
                     \"base\": {\"ref\": \"$BASE_BRANCH\"}
                   }
-                }"
+                }" || echo "Webhook request failed but continuing..."
             else
               # This is a pull request event
-              curl -X POST $WEBHOOK_URL \
+              echo "Sending pull request event webhook..."
+              curl -v -X POST $WEBHOOK_URL \
                 -H "Content-Type: application/json" \
                 -H "X-GitHub-Event: pull_request" \
                 -d "{
@@ -69,6 +87,6 @@ jobs:
                     \"head\": {\"ref\": \"$HEAD_BRANCH\"},
                     \"base\": {\"ref\": \"$BASE_BRANCH\"}
                   }
-                }"
+                }" || echo "Webhook request failed but continuing..."
             fi
           fi 
