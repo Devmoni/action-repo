@@ -1,0 +1,54 @@
+name: Webhook Notifications
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    types: [opened, closed]
+    branches: [ main, master ]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Send Webhook for Push
+        if: github.event_name == 'push'
+        uses: distributhor/workflow-webhook@v3
+        env:
+          webhook_url: ${{ secrets.WEBHOOK_URL }}
+          webhook_secret: ${{ secrets.WEBHOOK_SECRET }}
+          data: |
+            {
+              "sender": {
+                "login": "${{ github.actor }}"
+              },
+              "after": "${{ github.sha }}",
+              "ref": "${{ github.ref }}",
+              "head_commit": {
+                "id": "${{ github.sha }}"
+              }
+            }
+
+      - name: Send Webhook for Pull Request
+        if: github.event_name == 'pull_request'
+        uses: distributhor/workflow-webhook@v3
+        env:
+          webhook_url: ${{ secrets.WEBHOOK_URL }}
+          webhook_secret: ${{ secrets.WEBHOOK_SECRET }}
+          data: |
+            {
+              "sender": {
+                "login": "${{ github.actor }}"
+              },
+              "pull_request": {
+                "id": "${{ github.event.pull_request.node_id }}",
+                "head": {
+                  "ref": "${{ github.event.pull_request.head.ref }}"
+                },
+                "base": {
+                  "ref": "${{ github.event.pull_request.base.ref }}"
+                }
+              }
+            } 

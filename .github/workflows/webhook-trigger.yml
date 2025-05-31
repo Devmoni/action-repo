@@ -1,0 +1,74 @@
+name: Webhook Trigger
+
+on:
+  push:
+    branches:
+      - '*'
+  pull_request:
+    types: [opened, closed]
+    branches:
+      - '*'
+
+jobs:
+  webhook:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Send Webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          EVENT_TYPE="${{ github.event_name }}"
+          AUTHOR="${{ github.actor }}"
+          
+          if [[ "$EVENT_TYPE" == "push" ]]; then
+            # For push events
+            BRANCH_NAME=${GITHUB_REF#refs/heads/}
+            COMMIT_HASH="${{ github.sha }}"
+            
+            curl -X POST $WEBHOOK_URL \
+              -H "Content-Type: application/json" \
+              -H "X-GitHub-Event: push" \
+              -d "{
+                \"sender\": {\"login\": \"$AUTHOR\"},
+                \"ref\": \"refs/heads/$BRANCH_NAME\",
+                \"after\": \"$COMMIT_HASH\"
+              }"
+              
+          elif [[ "$EVENT_TYPE" == "pull_request" ]]; then
+            # For pull request events
+            PR_ACTION="${{ github.event.action }}"
+            PR_ID="${{ github.event.pull_request.id }}"
+            HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
+            BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
+            
+            if [[ "$PR_ACTION" == "closed" ]] && [[ "${{ github.event.pull_request.merged }}" == "true" ]]; then
+              # This is a merge event
+              curl -X POST $WEBHOOK_URL \
+                -H "Content-Type: application/json" \
+                -H "X-GitHub-Event: merge" \
+                -d "{
+                  \"sender\": {\"login\": \"$AUTHOR\"},
+                  \"pull_request\": {
+                    \"id\": \"$PR_ID\",
+                    \"head\": {\"ref\": \"$HEAD_BRANCH\"},
+                    \"base\": {\"ref\": \"$BASE_BRANCH\"}
+                  }
+                }"
+            else
+              # This is a pull request event
+              curl -X POST $WEBHOOK_URL \
+                -H "Content-Type: application/json" \
+                -H "X-GitHub-Event: pull_request" \
+                -d "{
+                  \"sender\": {\"login\": \"$AUTHOR\"},
+                  \"pull_request\": {
+                    \"id\": \"$PR_ID\",
+                    \"head\": {\"ref\": \"$HEAD_BRANCH\"},
+                    \"base\": {\"ref\": \"$BASE_BRANCH\"}
+                  }
+                }"
+            fi
+          fi 
