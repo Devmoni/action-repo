@@ -16,22 +16,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
+      - name: Debug Environment
+        run: |
+          echo "GitHub Event Name: ${{ github.event_name }}"
+          echo "GitHub Actor: ${{ github.actor }}"
+          echo "GitHub Ref: ${{ github.ref }}"
+          echo "GitHub SHA: ${{ github.sha }}"
+          echo "Checking WEBHOOK_URL..."
+          if [ -n "${{ secrets.WEBHOOK_URL }}" ]; then
+            echo "WEBHOOK_URL is set"
+          else
+            echo "WEBHOOK_URL is NOT set"
+            exit 1
+          fi
+
       - name: Send Webhook
+        if: success()
         env:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
         run: |
-          # Debug information
-          echo "Event type: ${{ github.event_name }}"
-          echo "Actor: ${{ github.actor }}"
-          
-          # Check if WEBHOOK_URL is set
-          if [ -z "$WEBHOOK_URL" ]; then
-            echo "Error: WEBHOOK_URL is not set. Please add it in repository secrets."
-            exit 1
-          fi
-          
           EVENT_TYPE="${{ github.event_name }}"
           AUTHOR="${{ github.actor }}"
+          
+          echo "Preparing to send webhook for $EVENT_TYPE event..."
           
           if [[ "$EVENT_TYPE" == "push" ]]; then
             # For push events
@@ -39,54 +46,92 @@ jobs:
             COMMIT_HASH="${{ github.sha }}"
             
             echo "Sending push event webhook..."
-            curl -v -X POST $WEBHOOK_URL \
+            RESPONSE=$(curl -v -X POST $WEBHOOK_URL \
               -H "Content-Type: application/json" \
               -H "X-GitHub-Event: push" \
               -d "{
                 \"sender\": {\"login\": \"$AUTHOR\"},
                 \"ref\": \"refs/heads/$BRANCH_NAME\",
-                \"after\": \"$COMMIT_HASH\"
-              }" || echo "Webhook request failed but continuing..."
+                \"after\": \"$COMMIT_HASH\",
+                \"repository\": {
+                  \"full_name\": \"${{ github.repository }}\"
+                },
+                \"pusher\": {
+                  \"name\": \"$AUTHOR\"
+                }
+              }" 2>&1)
+            
+            echo "Webhook Response:"
+            echo "$RESPONSE"
               
           elif [[ "$EVENT_TYPE" == "pull_request" ]]; then
             # For pull request events
             PR_ACTION="${{ github.event.action }}"
             PR_ID="${{ github.event.pull_request.id }}"
+            PR_TITLE="${{ github.event.pull_request.title }}"
             HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
             BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
+            IS_MERGED="${{ github.event.pull_request.merged }}"
             
-            echo "PR Action: $PR_ACTION"
+            echo "Pull Request Details:"
+            echo "Action: $PR_ACTION"
             echo "PR ID: $PR_ID"
-            echo "Head Branch: $HEAD_BRANCH"
-            echo "Base Branch: $BASE_BRANCH"
+            echo "Title: $PR_TITLE"
+            echo "From Branch: $HEAD_BRANCH"
+            echo "To Branch: $BASE_BRANCH"
+            echo "Is Merged: $IS_MERGED"
             
-            if [[ "$PR_ACTION" == "closed" ]] && [[ "${{ github.event.pull_request.merged }}" == "true" ]]; then
-              # This is a merge event
+            if [[ "$PR_ACTION" == "closed" ]] && [[ "$IS_MERGED" == "true" ]]; then
               echo "Sending merge event webhook..."
-              curl -v -X POST $WEBHOOK_URL \
-                -H "Content-Type: application/json" \
-                -H "X-GitHub-Event: merge" \
-                -d "{
-                  \"sender\": {\"login\": \"$AUTHOR\"},
-                  \"pull_request\": {
-                    \"id\": \"$PR_ID\",
-                    \"head\": {\"ref\": \"$HEAD_BRANCH\"},
-                    \"base\": {\"ref\": \"$BASE_BRANCH\"}
-                  }
-                }" || echo "Webhook request failed but continuing..."
-            else
-              # This is a pull request event
-              echo "Sending pull request event webhook..."
-              curl -v -X POST $WEBHOOK_URL \
+              RESPONSE=$(curl -v -X POST $WEBHOOK_URL \
                 -H "Content-Type: application/json" \
                 -H "X-GitHub-Event: pull_request" \
                 -d "{
+                  \"action\": \"$PR_ACTION\",
                   \"sender\": {\"login\": \"$AUTHOR\"},
+                  \"repository\": {
+                    \"full_name\": \"${{ github.repository }}\"
+                  },
                   \"pull_request\": {
                     \"id\": \"$PR_ID\",
+                    \"title\": \"$PR_TITLE\",
                     \"head\": {\"ref\": \"$HEAD_BRANCH\"},
-                    \"base\": {\"ref\": \"$BASE_BRANCH\"}
+                    \"base\": {\"ref\": \"$BASE_BRANCH\"},
+                    \"merged\": true,
+                    \"merge_commit_sha\": \"${{ github.event.pull_request.merge_commit_sha }}\"
                   }
-                }" || echo "Webhook request failed but continuing..."
+                }" 2>&1)
+            else
+              echo "Sending pull request event webhook..."
+              RESPONSE=$(curl -v -X POST $WEBHOOK_URL \
+                -H "Content-Type: application/json" \
+                -H "X-GitHub-Event: pull_request" \
+                -d "{
+                  \"action\": \"$PR_ACTION\",
+                  \"sender\": {\"login\": \"$AUTHOR\"},
+                  \"repository\": {
+                    \"full_name\": \"${{ github.repository }}\"
+                  },
+                  \"pull_request\": {
+                    \"id\": \"$PR_ID\",
+                    \"title\": \"$PR_TITLE\",
+                    \"head\": {\"ref\": \"$HEAD_BRANCH\"},
+                    \"base\": {\"ref\": \"$BASE_BRANCH\"},
+                    \"merged\": false
+                  }
+                }" 2>&1)
             fi
+            
+            echo "Webhook Response:"
+            echo "$RESPONSE"
+          fi
+
+      - name: Check Webhook Status
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "Webhook sent successfully"
+          else
+            echo "Webhook failed to send"
+            exit 1
           fi 
